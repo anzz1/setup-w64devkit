@@ -1,0 +1,94 @@
+name: "Setup w64devkit"
+description: "Install and configure w64devkit for MinGW builds (Windows runners only)"
+
+inputs:
+  platform:
+    description: "Target platform (x86 or x64)"
+    required: true
+  version:
+    description: "w64devkit version (e.g. 2.9.1) or 'latest'"
+    required: false
+    default: "latest"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Ensure Windows runner
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" != "Windows" ]; then
+          echo "This action only supports Windows runners."
+          exit 1
+        fi
+
+    - name: Resolve version
+      id: resolve
+      shell: pwsh
+      run: |
+        $versionInput = "${{ inputs.version }}"
+        $platform = "${{ inputs.platform }}"
+
+        if ($platform -ne "x86" -and $platform -ne "x64") {
+          throw "Invalid platform: `"$platform`" (expected `"x86`" or `"x64`")"
+        }
+
+        if ([string]::IsNullOrEmpty($versionInput) -or $versionInput -eq "latest") {
+          Write-Host "Fetching latest version..."
+          $release = Invoke-RestMethod https://api.github.com/repos/skeeto/w64devkit/releases/latest
+          $version = $release.tag_name.TrimStart("v")
+        } else {
+          $version = $versionInput
+        }
+
+        Write-Host "Resolved version: `"$version`""
+        "version=$version" >> $env:GITHUB_OUTPUT
+
+    - name: Cache w64devkit
+      id: cache
+      uses: actions/cache@v5
+      with:
+        path: w64devkit
+        key: ${{ runner.os }}-w64devkit-${{ inputs.platform }}-${{ steps.resolve.outputs.version }}
+
+    - name: Download w64devkit
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        $version = "${{ steps.resolve.outputs.version }}"
+        $platform = "${{ inputs.platform }}"
+
+        $file = "w64devkit-$platform-$version.7z.exe"
+        $url = "https://github.com/skeeto/w64devkit/releases/download/v$version/$file"
+
+        Write-Host "Downloading $url"
+        Invoke-WebRequest -Uri $url -OutFile "w64devkit.exe"
+
+    - name: Extract w64devkit
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path w64devkit | Out-Null
+        7z x w64devkit.exe -y
+
+    - name: Add to PATH
+      shell: pwsh
+      run: |
+        "$PWD\w64devkit\bin" >> $env:GITHUB_PATH
+
+    - name: Set up environment
+      shell: pwsh
+      run: |
+        "W64DEVKIT_HOME=$PWD\w64devkit" >> $env:GITHUB_ENV
+        "W64DEVKIT=${{ steps.resolve.outputs.version }}" >> $env:GITHUB_ENV
+        if ("${{ inputs.platform }}" -eq "x64") {
+          "CC=x86_64-w64-mingw32-gcc" >> $env:GITHUB_ENV
+          "CXX=x86_64-w64-mingw32-g++" >> $env:GITHUB_ENV
+        } else {
+          "CC=i686-w64-mingw32-gcc" >> $env:GITHUB_ENV
+          "CXX=i686-w64-mingw32-g++" >> $env:GITHUB_ENV
+        }
+
+    - name: Verify toolchain
+      shell: pwsh
+      run: |
+        gcc --version

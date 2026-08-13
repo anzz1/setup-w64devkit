@@ -1,0 +1,31 @@
+name: Test Action
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch: # allows manual triggering
+  schedule:
+    - cron: '20 00 * * 3' # weekly, at 00:20 UTC on Wednesday (randomly chosen)
+
+jobs:
+  test:
+    runs-on: windows-latest
+    name: Test (${{ matrix.platform }})
+
+    strategy:
+      matrix:
+        platform: [x86, x64]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up w64devkit (${{ matrix.platform }})
+        uses: ./
+        with:
+          platform: ${{ matrix.platform }}
+
+      - name: Test compile
+        shell: cmd
+        run: |
+          echo int main(){return 0;} > test.c
+          %CC% test.c -o test.exe
